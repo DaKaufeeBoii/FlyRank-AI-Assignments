@@ -109,3 +109,30 @@ def get_task(task_id: int):
         return row_to_task(row)
     finally:
         conn.close()
+
+
+@app.post(
+    "/tasks",
+    response_model=Task,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new task in SQLite",
+)
+def create_task(payload: TaskCreate):
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Title cannot be empty or whitespace only",
+        )
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO tasks (title, done) VALUES (?, ?);",
+                (title, 0),
+            )
+            new_id = cursor.lastrowid
+        return Task(id=new_id, title=title, done=False)
+    finally:
+        conn.close()
+
