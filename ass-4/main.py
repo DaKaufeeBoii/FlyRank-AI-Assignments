@@ -2,12 +2,12 @@
 
 from contextlib import asynccontextmanager
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 from supabase_auth.errors import AuthApiError, AuthError
 
@@ -16,17 +16,53 @@ from supabase_client import PORT, get_supabase_client, init_supabase
 logger = logging.getLogger("auth_api")
 
 # HTTPBearer security scheme: enables the Swagger UI "Authorize" padlock
-security = HTTPBearer(auto_error=False)
+security = HTTPBearer(
+    auto_error=False,
+    description="Enter the Supabase access token (JWT) obtained from /auth/login. Example: Bearer eyJhbGciOi...",
+)
+
+
+# ---------------------------------------------------------
+# Request & Response Schemas
+# ---------------------------------------------------------
 
 
 class AuthRequest(BaseModel):
     """Schema for authentication credentials."""
-    email: Optional[str] = None
-    password: Optional[str] = None
+    email: Optional[str] = Field(default=None, example="user@example.com", description="User email address")
+    password: Optional[str] = Field(default=None, example="StrongPassword123", description="User password")
+
+
+class AuthResponse(BaseModel):
+    """Schema returned upon successful login."""
+    access_token: str = Field(description="Supabase signed JWT access token")
+    refresh_token: str = Field(description="Supabase refresh token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: Optional[int] = Field(default=3600, description="Token lifetime in seconds")
+    user: Dict[str, Any] = Field(description="Basic user metadata")
+
+
+class UserProfileResponse(BaseModel):
+    """Schema representing user profile metadata."""
+    id: str = Field(description="Supabase user UUID")
+    email: str = Field(description="User email address")
+    created_at: Optional[str] = Field(default=None, description="Account creation timestamp")
+    app_metadata: Dict[str, Any] = Field(default_factory=dict, description="Application metadata")
+    user_metadata: Dict[str, Any] = Field(default_factory=dict, description="Custom user metadata")
+
+
+class MessageResponse(BaseModel):
+    """Generic message response."""
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response."""
+    error: str
 
 
 class AuthenticatedUser(BaseModel):
-    """Schema representing an authenticated user from Supabase."""
+    """Internal model representing an authenticated user from Supabase."""
     id: str
     email: str
     created_at: Optional[str] = None
@@ -43,10 +79,20 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Secure Auth API",
+    title="Secure Auth API (Supabase & FastAPI)",
     version="1.0.0",
-    description="FastAPI service with Supabase Auth, JWT verification, and protected routes.",
+    description=(
+        "Production-ready authentication and authorization API built with FastAPI and Supabase Auth.\n\n"
+        "### Features:\n"
+        "- **Sign Up & Log In**: Public auth endpoints issuing signed JWTs.\n"
+        "- **JWT Verification**: Token signature and claims verified securely via Supabase Auth.\n"
+        "- **Reusable Auth Guard**: FastAPI `Depends(get_current_user)` protecting private endpoints.\n"
+        "- **Protected Endpoints**: `/protected/profile`, `/protected/dashboard`, `/auth/logout`.\n"
+        "- **Swagger Bearer Auth**: Click the **Authorize** padlock above, paste your JWT, and test routes."
+    ),
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 
@@ -135,7 +181,7 @@ async def get_current_user(
         )
 
 
-@app.get("/health", tags=["Health"])
+@app.get("/health", tags=["Health"], response_model=Dict[str, str], summary="Health Check")
 async def health_check():
     """Health check endpoint to verify server is active."""
     return {"status": "ok", "service": "Supabase Auth API"}
@@ -146,7 +192,16 @@ async def health_check():
 # ---------------------------------------------------------
 
 
-@app.post("/auth/signup", status_code=status.HTTP_201_CREATED, tags=["Auth"])
+@app.post(
+    "/auth/signup",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Auth"],
+    summary="Register a new account",
+    responses={
+        201: {"model": UserProfileResponse, "description": "Account created successfully"},
+        400: {"model": ErrorResponse, "description": "Missing credentials or invalid request"},
+    },
+)
 async def signup(credentials: AuthRequest):
     """Register a new user with email and password via Supabase Auth."""
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
@@ -194,7 +249,18 @@ async def signup(credentials: AuthRequest):
         )
 
 
-@app.post("/auth/login", status_code=status.HTTP_200_OK, tags=["Auth"])
+@app.post(
+    "/auth/login",
+    status_code=status.HTTP_200_OK,
+    tags=["Auth"],
+    response_model=AuthResponse,
+    summary="Log in and retrieve JWT",
+    responses={
+        200: {"model": AuthResponse, "description": "Successfully authenticated with access and refresh tokens"},
+        400: {"model": ErrorResponse, "description": "Missing credentials"},
+        401: {"model": ErrorResponse, "description": "Invalid login credentials"},
+    },
+)
 async def login(credentials: AuthRequest):
     """Authenticate an existing user and return Supabase JWT access and refresh tokens."""
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
@@ -242,7 +308,16 @@ async def login(credentials: AuthRequest):
         )
 
 
-@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, tags=["Auth"])
+@app.post(
+    "/auth/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Auth"],
+    summary="Log out (terminate session)",
+    responses={
+        204: {"description": "Successfully logged out, session terminated"},
+        401: {"model": ErrorResponse, "description": "Missing, malformed, or invalid bearer token"},
+    },
+)
 async def logout(user: AuthenticatedUser = Depends(get_current_user)):
     """End the user's session in Supabase Auth (protected by auth guard)."""
     client = get_supabase_client()
@@ -258,7 +333,13 @@ async def logout(user: AuthenticatedUser = Depends(get_current_user)):
 # ---------------------------------------------------------
 
 
-@app.get("/public/info", status_code=status.HTTP_200_OK, tags=["Public"])
+@app.get(
+    "/public/info",
+    status_code=status.HTTP_200_OK,
+    tags=["Public"],
+    response_model=MessageResponse,
+    summary="Read public information (open to everyone)",
+)
 async def public_info():
     """Public open endpoint reachable by anyone without authentication."""
     return {"message": "Welcome stranger! This info is public."}
@@ -269,7 +350,17 @@ async def public_info():
 # ---------------------------------------------------------
 
 
-@app.get("/protected/profile", status_code=status.HTTP_200_OK, tags=["Protected"])
+@app.get(
+    "/protected/profile",
+    status_code=status.HTTP_200_OK,
+    tags=["Protected"],
+    response_model=UserProfileResponse,
+    summary="Read private profile data",
+    responses={
+        200: {"model": UserProfileResponse, "description": "Verified profile metadata"},
+        401: {"model": ErrorResponse, "description": "Access token required, or invalid/expired token"},
+    },
+)
 async def protected_profile(user: AuthenticatedUser = Depends(get_current_user)):
     """Protected profile endpoint - verified via reusable auth dependency."""
     return {
@@ -281,7 +372,16 @@ async def protected_profile(user: AuthenticatedUser = Depends(get_current_user))
     }
 
 
-@app.get("/protected/dashboard", status_code=status.HTTP_200_OK, tags=["Protected"])
+@app.get(
+    "/protected/dashboard",
+    status_code=status.HTTP_200_OK,
+    tags=["Protected"],
+    summary="Read private dashboard",
+    responses={
+        200: {"description": "Access granted to user dashboard"},
+        401: {"model": ErrorResponse, "description": "Access token required, or invalid/expired token"},
+    },
+)
 async def protected_dashboard(user: AuthenticatedUser = Depends(get_current_user)):
     """Second protected endpoint demonstrating middleware reuse without extra code."""
     return {
