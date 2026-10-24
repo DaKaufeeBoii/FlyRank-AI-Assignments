@@ -1,0 +1,10 @@
+# Python virtual environment and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# SQLite databases (created automatically on startup)
+tasks.db
+*.db
