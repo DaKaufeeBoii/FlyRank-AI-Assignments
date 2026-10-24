@@ -1,10 +1,9 @@
-"""Database connection and initialization module for the Task API."""
+"""Database connection, schema setup, indexing, and transactional seeding."""
 
 import os
 from pathlib import Path
 import sqlite3
 
-# Default database file path in the project directory
 DB_PATH = Path(os.getenv("TASKS_DB_PATH", Path(__file__).resolve().parent / "tasks.db"))
 
 
@@ -18,7 +17,7 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path | str | None = None) -> None:
-    """Create tasks table and seed initial tasks if the table is empty.
+    """Create tasks table, indexes, and seed initial tasks if the table is empty.
     
     Wrapped in a transaction so initialization is all-or-nothing.
     """
@@ -26,28 +25,37 @@ def init_db(db_path: Path | str | None = None) -> None:
     conn = get_connection(target_path)
     try:
         with conn:
-            # 1. Create table if it doesn't exist
+            # 1. Create table with timestamps if it doesn't exist
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
-                    done INTEGER NOT NULL DEFAULT 0
+                    done INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+                    updated_at TEXT NOT NULL DEFAULT (DATETIME('now'))
                 );
                 """
             )
-            # Create an index on done for efficient status filtering
+            
+            # 2. Stretch: Add index on columns used for search and filtering
+            # An index accelerates WHERE done = ? lookups from O(N) full table scans to O(log N) searches.
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_tasks_done ON tasks(done);
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(title);
+                """
+            )
 
-            # 2. Check if the table is empty before seeding
+            # 3. Check if table is empty
             cursor = conn.execute("SELECT COUNT(*) FROM tasks;")
             count = cursor.fetchone()[0]
 
-            # 3. Seed initial tasks only on first run (when count is 0)
+            # 4. Transactional seeding: only run when count is 0
             if count == 0:
                 initial_tasks = [
                     ("Read the assignment", 1),
@@ -64,4 +72,4 @@ def init_db(db_path: Path | str | None = None) -> None:
 
 if __name__ == "__main__":
     init_db()
-    print(f"Database initialized at {DB_PATH}")
+    print(f"Database successfully initialized at {DB_PATH}")

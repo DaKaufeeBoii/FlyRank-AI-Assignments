@@ -1,4 +1,4 @@
-"""FastAPI Task API connected to SQLite database for FlyRank Week 3."""
+"""FastAPI Task API connected to SQLite database with SQL filtering, search, stats, and transactions."""
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
@@ -12,7 +12,7 @@ from database import get_connection, init_db
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Automatically ensure database and tables are created and seeded on startup."""
+    """Automatically ensure database, tables, and seed tasks are initialized on startup."""
     init_db()
     yield
 
@@ -20,14 +20,14 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Task API",
     version="1.0",
-    description="A SQLite-backed to-do list API with full CRUD persistence.",
+    description="A SQLite-backed to-do list API with full CRUD persistence, SQL filtering, and stats.",
     lifespan=lifespan,
 )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(_request: Request, exc: RequestValidationError):
-    """Return 400 Bad Request with a clear JSON error message."""
+    """Return 400 Bad Request with a clear JSON error message for validation errors."""
     messages = [error["msg"] for error in exc.errors()]
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -72,7 +72,7 @@ def row_to_task(row: sqlite3.Row) -> Task:
 
 @app.get("/", summary="Describe the Task API")
 def read_root():
-    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
+    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks", "/stats"]}
 
 
 @app.get("/health", summary="Check that the server is running")
@@ -80,11 +80,44 @@ def health_check():
     return {"status": "ok"}
 
 
-@app.get("/tasks", response_model=list[Task], summary="List all tasks from SQLite")
-def list_tasks():
+@app.get("/tasks", response_model=list[Task], summary="List and filter tasks from SQLite")
+def list_tasks(
+    done: bool | None = Query(default=None, description="Filter by completion status"),
+    search: str | None = Query(default=None, description="Search titles using SQL LIKE"),
+    sort: str | None = Query(default=None, description="Sort order: 'title' or 'id'"),
+    limit: int | None = Query(default=None, ge=1, description="Max number of tasks to return"),
+    offset: int = Query(default=0, ge=0, description="Number of tasks to skip"),
+):
+    query = "SELECT id, title, done FROM tasks WHERE 1=1"
+    params: list = []
+
+    # Filter by completion status using parameterized query
+    if done is not None:
+        query += " AND done = ?"
+        params.append(1 if done else 0)
+
+    # Search by title using SQL LIKE operator
+    if search:
+        query += " AND title LIKE ?"
+        params.append(f"%{search}%")
+
+    # Sort alphabetically or by id
+    if sort == "title":
+        query += " ORDER BY title ASC"
+    else:
+        query += " ORDER BY id ASC"
+
+    # Pagination via SQL LIMIT and OFFSET
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    elif offset > 0:
+        query += " LIMIT -1 OFFSET ?"
+        params.append(offset)
+
     conn = get_connection()
     try:
-        cursor = conn.execute("SELECT id, title, done FROM tasks ORDER BY id ASC;")
+        cursor = conn.execute(query, params)
         rows = cursor.fetchall()
         return [row_to_task(row) for row in rows]
     finally:
@@ -145,7 +178,6 @@ def create_task(payload: TaskCreate):
 def update_task(task_id: int, payload: TaskUpdate):
     conn = get_connection()
     try:
-        # Check task existence
         cursor = conn.execute(
             "SELECT id, title, done FROM tasks WHERE id = ?;",
             (task_id,),
@@ -185,7 +217,11 @@ def update_task(task_id: int, payload: TaskUpdate):
 
         with conn:
             conn.execute(
-                "UPDATE tasks SET title = ?, done = ? WHERE id = ?;",
+                """
+                UPDATE tasks
+                SET title = ?, done = ?, updated_at = DATETIME('now')
+                WHERE id = ?;
+                """,
                 (new_title, new_done, task_id),
             )
 
@@ -217,3 +253,17 @@ def delete_task(task_id: int):
         conn.close()
 
 
+@app.get("/stats", summary="Count total, completed, and open tasks using SQL COUNT(*)")
+def task_stats():
+    """Real statistics computed with SELECT COUNT(*) in SQL instead of counting in memory."""
+    conn = get_connection()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM tasks;").fetchone()[0]
+        done_count = conn.execute("SELECT COUNT(*) FROM tasks WHERE done = 1;").fetchone()[0]
+        return {
+            "total": total,
+            "done": done_count,
+            "open": total - done_count,
+        }
+    finally:
+        conn.close()
