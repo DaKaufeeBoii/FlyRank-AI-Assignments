@@ -136,3 +136,84 @@ def create_task(payload: TaskCreate):
     finally:
         conn.close()
 
+
+@app.put(
+    "/tasks/{task_id}",
+    response_model=Task,
+    summary="Update a task's title or completion status in SQLite",
+)
+def update_task(task_id: int, payload: TaskUpdate):
+    conn = get_connection()
+    try:
+        # Check task existence
+        cursor = conn.execute(
+            "SELECT id, title, done FROM tasks WHERE id = ?;",
+            (task_id,),
+        )
+        existing = cursor.fetchone()
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found",
+            )
+
+        changes = payload.model_dump(exclude_unset=True)
+        if not changes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide a title or done value",
+            )
+        if any(changes.get(field) is None for field in ("title", "done") if field in changes):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Task fields cannot be null",
+            )
+
+        new_title = existing["title"]
+        if payload.title is not None:
+            stripped = payload.title.strip()
+            if not stripped:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Title cannot be empty or whitespace only",
+                )
+            new_title = stripped
+
+        new_done = existing["done"]
+        if payload.done is not None:
+            new_done = 1 if payload.done else 0
+
+        with conn:
+            conn.execute(
+                "UPDATE tasks SET title = ?, done = ? WHERE id = ?;",
+                (new_title, new_done, task_id),
+            )
+
+        return Task(id=task_id, title=new_title, done=bool(new_done))
+    finally:
+        conn.close()
+
+
+@app.delete(
+    "/tasks/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a task from SQLite",
+)
+def delete_task(task_id: int):
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.execute(
+                "DELETE FROM tasks WHERE id = ?;",
+                (task_id,),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Task not found",
+                )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    finally:
+        conn.close()
+
+
