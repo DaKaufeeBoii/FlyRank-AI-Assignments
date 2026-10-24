@@ -3,9 +3,10 @@
 from contextlib import asynccontextmanager
 import logging
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 import uvicorn
 from supabase_auth.errors import AuthApiError, AuthError
@@ -14,11 +15,24 @@ from supabase_client import PORT, get_supabase_client, init_supabase
 
 logger = logging.getLogger("auth_api")
 
+# HTTPBearer security scheme: enables the Swagger UI "Authorize" padlock
+security = HTTPBearer(auto_error=False)
+
 
 class AuthRequest(BaseModel):
     """Schema for authentication credentials."""
     email: Optional[str] = None
     password: Optional[str] = None
+
+
+class AuthenticatedUser(BaseModel):
+    """Schema representing an authenticated user from Supabase."""
+    id: str
+    email: str
+    created_at: Optional[str] = None
+    app_metadata: dict = {}
+    user_metadata: dict = {}
+    token: str
 
 
 @asynccontextmanager
@@ -55,6 +69,70 @@ async def http_error_handler(_request: Request, exc: HTTPException):
         content={"error": message},
         headers=exc.headers,
     )
+
+
+# ---------------------------------------------------------
+# STAGE 4: Reusable Auth Middleware / Dependency Guard
+# ---------------------------------------------------------
+
+
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> AuthenticatedUser:
+    """Reusable authentication guard dependency.
+
+    Extracts the Bearer token from the Authorization header,
+    verifies it with Supabase Auth, and returns the authenticated user.
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Access token required"},
+        )
+
+    parts = auth_header.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Access token required"},
+        )
+
+    token = parts[1].strip()
+    client = get_supabase_client()
+
+    try:
+        user_response = client.auth.get_user(token)
+        if not user_response or not user_response.user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": "Invalid or expired token"},
+            )
+
+        user = user_response.user
+        return AuthenticatedUser(
+            id=str(user.id),
+            email=user.email or "",
+            created_at=str(user.created_at) if user.created_at else None,
+            app_metadata=user.app_metadata or {},
+            user_metadata=user.user_metadata or {},
+            token=token,
+        )
+    except HTTPException:
+        raise
+    except (AuthApiError, AuthError) as e:
+        logger.warning("Supabase rejected token: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"},
+        )
+    except Exception as e:
+        logger.error("Token verification failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"},
+        )
 
 
 @app.get("/health", tags=["Health"])
@@ -164,6 +242,17 @@ async def login(credentials: AuthRequest):
         )
 
 
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, tags=["Auth"])
+async def logout(user: AuthenticatedUser = Depends(get_current_user)):
+    """End the user's session in Supabase Auth (protected by auth guard)."""
+    client = get_supabase_client()
+    try:
+        client.auth.sign_out()
+    except Exception as e:
+        logger.warning("Sign out error ignored: %s", e)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 # ---------------------------------------------------------
 # STAGE 2: Public gate
 # ---------------------------------------------------------
@@ -176,60 +265,30 @@ async def public_info():
 
 
 # ---------------------------------------------------------
-# STAGE 3: The guard: token verification with Supabase
+# STAGE 3 & 4: Protected routes using reusable guard
 # ---------------------------------------------------------
 
 
 @app.get("/protected/profile", status_code=status.HTTP_200_OK, tags=["Protected"])
-async def protected_profile(request: Request):
-    """Protected profile endpoint - verifies JWT token with Supabase and returns safe metadata."""
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Access token required"},
-        )
+async def protected_profile(user: AuthenticatedUser = Depends(get_current_user)):
+    """Protected profile endpoint - verified via reusable auth dependency."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "created_at": user.created_at,
+        "app_metadata": user.app_metadata,
+        "user_metadata": user.user_metadata,
+    }
 
-    parts = auth_header.strip().split()
-    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Access token required"},
-        )
 
-    token = parts[1].strip()
-    client = get_supabase_client()
-
-    try:
-        user_response = client.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"error": "Invalid or expired token"},
-            )
-
-        user = user_response.user
-        return {
-            "id": str(user.id),
-            "email": user.email,
-            "created_at": str(user.created_at) if user.created_at else None,
-            "app_metadata": user.app_metadata or {},
-            "user_metadata": user.user_metadata or {},
-        }
-    except HTTPException:
-        raise
-    except (AuthApiError, AuthError) as e:
-        logger.warning("Supabase rejected token: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Invalid or expired token"},
-        )
-    except Exception as e:
-        logger.error("Token verification failed: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Invalid or expired token"},
-        )
+@app.get("/protected/dashboard", status_code=status.HTTP_200_OK, tags=["Protected"])
+async def protected_dashboard(user: AuthenticatedUser = Depends(get_current_user)):
+    """Second protected endpoint demonstrating middleware reuse without extra code."""
+    return {
+        "message": f"Welcome to your dashboard, {user.email}!",
+        "user_id": user.id,
+        "status": "active",
+    }
 
 
 if __name__ == "__main__":
