@@ -165,7 +165,7 @@ async def login(credentials: AuthRequest):
 
 
 # ---------------------------------------------------------
-# STAGE 2: The public & protected gates (unverified guard)
+# STAGE 2: Public gate
 # ---------------------------------------------------------
 
 
@@ -175,9 +175,14 @@ async def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
 
+# ---------------------------------------------------------
+# STAGE 3: The guard: token verification with Supabase
+# ---------------------------------------------------------
+
+
 @app.get("/protected/profile", status_code=status.HTTP_200_OK, tags=["Protected"])
 async def protected_profile(request: Request):
-    """Protected profile endpoint - Stage 2 extracts token, returns 401 if missing."""
+    """Protected profile endpoint - verifies JWT token with Supabase and returns safe metadata."""
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         raise HTTPException(
@@ -193,7 +198,38 @@ async def protected_profile(request: Request):
         )
 
     token = parts[1].strip()
-    return {"message": "Token presented", "token": token}
+    client = get_supabase_client()
+
+    try:
+        user_response = client.auth.get_user(token)
+        if not user_response or not user_response.user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": "Invalid or expired token"},
+            )
+
+        user = user_response.user
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "created_at": str(user.created_at) if user.created_at else None,
+            "app_metadata": user.app_metadata or {},
+            "user_metadata": user.user_metadata or {},
+        }
+    except HTTPException:
+        raise
+    except (AuthApiError, AuthError) as e:
+        logger.warning("Supabase rejected token: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"},
+        )
+    except Exception as e:
+        logger.error("Token verification failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"},
+        )
 
 
 if __name__ == "__main__":
