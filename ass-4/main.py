@@ -71,7 +71,6 @@ async def health_check():
 @app.post("/auth/signup", status_code=status.HTTP_201_CREATED, tags=["Auth"])
 async def signup(credentials: AuthRequest):
     """Register a new user with email and password via Supabase Auth."""
-    # Server never trusts client: validate fields are present and not blank
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -120,7 +119,6 @@ async def signup(credentials: AuthRequest):
 @app.post("/auth/login", status_code=status.HTTP_200_OK, tags=["Auth"])
 async def login(credentials: AuthRequest):
     """Authenticate an existing user and return Supabase JWT access and refresh tokens."""
-    # Validate non-empty fields
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -164,6 +162,38 @@ async def login(credentials: AuthRequest):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid login credentials"},
         )
+
+
+# ---------------------------------------------------------
+# STAGE 2: The public & protected gates (unverified guard)
+# ---------------------------------------------------------
+
+
+@app.get("/public/info", status_code=status.HTTP_200_OK, tags=["Public"])
+async def public_info():
+    """Public open endpoint reachable by anyone without authentication."""
+    return {"message": "Welcome stranger! This info is public."}
+
+
+@app.get("/protected/profile", status_code=status.HTTP_200_OK, tags=["Protected"])
+async def protected_profile(request: Request):
+    """Protected profile endpoint - Stage 2 extracts token, returns 401 if missing."""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Access token required"},
+        )
+
+    parts = auth_header.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Access token required"},
+        )
+
+    token = parts[1].strip()
+    return {"message": "Token presented", "token": token}
 
 
 if __name__ == "__main__":
