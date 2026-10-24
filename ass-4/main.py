@@ -1,8 +1,10 @@
 """FastAPI Authentication API with Supabase Auth."""
 
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -23,6 +25,40 @@ security = HTTPBearer(
 
 
 # ---------------------------------------------------------
+# In-Memory Rate Limiting for Login (Brute-Force Protection)
+# ---------------------------------------------------------
+
+FAILED_LOGIN_ATTEMPTS: Dict[str, List[datetime]] = defaultdict(list)
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_WINDOW_MINUTES = 5
+
+
+def check_login_rate_limit(client_ip: str) -> None:
+    """Check if the client IP has exceeded the allowed failed login threshold."""
+    now = datetime.now()
+    cutoff = now - timedelta(minutes=LOCKOUT_WINDOW_MINUTES)
+    # Filter attempts within recent window
+    FAILED_LOGIN_ATTEMPTS[client_ip] = [
+        ts for ts in FAILED_LOGIN_ATTEMPTS[client_ip] if ts > cutoff
+    ]
+    if len(FAILED_LOGIN_ATTEMPTS[client_ip]) >= MAX_FAILED_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": "Too many failed login attempts. Please try again later."},
+        )
+
+
+def record_failed_login(client_ip: str) -> None:
+    """Record a failed login attempt for the client IP."""
+    FAILED_LOGIN_ATTEMPTS[client_ip].append(datetime.now())
+
+
+def clear_failed_logins(client_ip: str) -> None:
+    """Reset failed attempts after a successful login."""
+    FAILED_LOGIN_ATTEMPTS.pop(client_ip, None)
+
+
+# ---------------------------------------------------------
 # Request & Response Schemas
 # ---------------------------------------------------------
 
@@ -33,6 +69,11 @@ class AuthRequest(BaseModel):
     password: Optional[str] = Field(default=None, example="StrongPassword123", description="User password")
 
 
+class RefreshRequest(BaseModel):
+    """Schema for token refresh request."""
+    refresh_token: Optional[str] = Field(default=None, example="eyJhbGciOi...", description="Supabase refresh token")
+
+
 class AuthResponse(BaseModel):
     """Schema returned upon successful login."""
     access_token: str = Field(description="Supabase signed JWT access token")
@@ -40,6 +81,14 @@ class AuthResponse(BaseModel):
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: Optional[int] = Field(default=3600, description="Token lifetime in seconds")
     user: Dict[str, Any] = Field(description="Basic user metadata")
+
+
+class RefreshResponse(BaseModel):
+    """Schema returned upon successful token refresh."""
+    access_token: str = Field(description="Fresh Supabase signed JWT access token")
+    refresh_token: str = Field(description="Fresh Supabase refresh token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: Optional[int] = Field(default=3600, description="Token lifetime in seconds")
 
 
 class UserProfileResponse(BaseModel):
@@ -70,6 +119,16 @@ class AuthenticatedUser(BaseModel):
     user_metadata: dict = {}
     token: str
 
+    @property
+    def is_admin(self) -> bool:
+        """Determine if user has administrator authorization."""
+        return bool(
+            self.app_metadata.get("role") == "admin"
+            or self.user_metadata.get("role") == "admin"
+            or self.user_metadata.get("is_admin") is True
+            or self.email.endswith("@flyrank.admin")
+        )
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -87,7 +146,10 @@ app = FastAPI(
         "- **Sign Up & Log In**: Public auth endpoints issuing signed JWTs.\n"
         "- **JWT Verification**: Token signature and claims verified securely via Supabase Auth.\n"
         "- **Reusable Auth Guard**: FastAPI `Depends(get_current_user)` protecting private endpoints.\n"
-        "- **Protected Endpoints**: `/protected/profile`, `/protected/dashboard`, `/auth/logout`.\n"
+        "- **Protected Endpoints**: `/protected/profile`, `/protected/dashboard`, `/protected/admin`, `/auth/logout`.\n"
+        "- **Token Refresh**: Exchange long-lived refresh tokens for new access tokens at `/auth/refresh`.\n"
+        "- **Role-Based Authorization (403)**: Admin-only access guard at `/protected/admin`.\n"
+        "- **Brute-Force Rate Limiting (429)**: Lockout after excessive failed logins.\n"
         "- **Swagger Bearer Auth**: Click the **Authorize** padlock above, paste your JWT, and test routes."
     ),
     lifespan=lifespan,
@@ -259,10 +321,16 @@ async def signup(credentials: AuthRequest):
         200: {"model": AuthResponse, "description": "Successfully authenticated with access and refresh tokens"},
         400: {"model": ErrorResponse, "description": "Missing credentials"},
         401: {"model": ErrorResponse, "description": "Invalid login credentials"},
+        429: {"model": ErrorResponse, "description": "Too many failed attempts (rate limited)"},
     },
 )
-async def login(credentials: AuthRequest):
+async def login(credentials: AuthRequest, request: Request):
     """Authenticate an existing user and return Supabase JWT access and refresh tokens."""
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # Enforce brute-force rate limiting
+    check_login_rate_limit(client_ip)
+
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -277,10 +345,14 @@ async def login(credentials: AuthRequest):
         })
 
         if not response.session or not response.session.access_token:
+            record_failed_login(client_ip)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={"error": "Invalid login credentials"},
             )
+
+        # Clear failed attempts on successful login
+        clear_failed_logins(client_ip)
 
         return {
             "access_token": response.session.access_token,
@@ -295,16 +367,68 @@ async def login(credentials: AuthRequest):
     except HTTPException:
         raise
     except (AuthApiError, AuthError) as e:
+        record_failed_login(client_ip)
         logger.warning("Supabase login rejected: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid login credentials"},
         )
     except Exception as e:
+        record_failed_login(client_ip)
         logger.error("Unexpected error during login: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid login credentials"},
+        )
+
+
+@app.post(
+    "/auth/refresh",
+    status_code=status.HTTP_200_OK,
+    tags=["Auth"],
+    response_model=RefreshResponse,
+    summary="Refresh an expired access token using a refresh token",
+    responses={
+        200: {"model": RefreshResponse, "description": "Successfully refreshed access token"},
+        400: {"model": ErrorResponse, "description": "Missing refresh token"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired refresh token"},
+    },
+)
+async def refresh_token_endpoint(body: RefreshRequest):
+    """Exchange a valid Supabase refresh token for a fresh access token."""
+    if not body.refresh_token or not body.refresh_token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "refresh_token is required"},
+        )
+
+    client = get_supabase_client()
+    try:
+        response = client.auth.refresh_session(body.refresh_token.strip())
+        if not response.session or not response.session.access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": "Invalid or expired refresh token"},
+            )
+        return {
+            "access_token": response.session.access_token,
+            "refresh_token": response.session.refresh_token,
+            "token_type": "bearer",
+            "expires_in": response.session.expires_in,
+        }
+    except HTTPException:
+        raise
+    except (AuthApiError, AuthError) as e:
+        logger.warning("Refresh token rejected: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired refresh token"},
+        )
+    except Exception as e:
+        logger.error("Unexpected error during refresh: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired refresh token"},
         )
 
 
@@ -388,6 +512,38 @@ async def protected_dashboard(user: AuthenticatedUser = Depends(get_current_user
         "message": f"Welcome to your dashboard, {user.email}!",
         "user_id": user.id,
         "status": "active",
+    }
+
+
+# ---------------------------------------------------------
+# STRETCH GOAL: 403 Forbidden Admin Authorization
+# ---------------------------------------------------------
+
+
+@app.get(
+    "/protected/admin",
+    status_code=status.HTTP_200_OK,
+    tags=["Protected"],
+    summary="Admin-only private area (demonstrates 403 Forbidden)",
+    responses={
+        200: {"description": "Access granted to administrator panel"},
+        401: {"model": ErrorResponse, "description": "Unauthenticated (who are you?)"},
+        403: {"model": ErrorResponse, "description": "Forbidden (I know who you are, but no)"},
+    },
+)
+async def protected_admin(user: AuthenticatedUser = Depends(get_current_user)):
+    """Admin-only endpoint demonstrating the distinction between 401 and 403."""
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Forbidden: Administrator privileges required to access this resource"},
+        )
+
+    return {
+        "message": f"Welcome Administrator {user.email}",
+        "user_id": user.id,
+        "role": "admin",
+        "system_stats": {"active_sessions": 42, "auth_mode": "Supabase JWT"},
     }
 
 
