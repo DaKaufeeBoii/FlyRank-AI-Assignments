@@ -62,6 +62,7 @@ class PoliteFetcher:
         if status_code != 200:
             raise RuntimeError(f"Failed fetch: {url} returned HTTP {status_code} (expected 200)")
 
+        response.encoding = "utf-8"
         content = response.text
         size = len(content.encode("utf-8"))
 
