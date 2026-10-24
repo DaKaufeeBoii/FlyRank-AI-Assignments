@@ -1,0 +1,18 @@
+# Python virtual environment and caches
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# SQLite databases (database created automatically on startup)
+*.db
+*.sqlite
+*.sqlite3
+tasks.db
+
+# OS files
+.DS_Store
+Thumbs.db
