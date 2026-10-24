@@ -65,13 +65,13 @@ def clear_failed_logins(client_ip: str) -> None:
 
 class AuthRequest(BaseModel):
     """Schema for authentication credentials."""
-    email: Optional[str] = Field(default=None, example="user@example.com", description="User email address")
-    password: Optional[str] = Field(default=None, example="StrongPassword123", description="User password")
+    email: Optional[str] = Field(default=None, examples=["user@example.com"], description="User email address")
+    password: Optional[str] = Field(default=None, examples=["StrongPassword123"], description="User password")
 
 
 class RefreshRequest(BaseModel):
     """Schema for token refresh request."""
-    refresh_token: Optional[str] = Field(default=None, example="eyJhbGciOi...", description="Supabase refresh token")
+    refresh_token: Optional[str] = Field(default=None, examples=["eyJhbGciOi..."], description="Supabase refresh token")
 
 
 class AuthResponse(BaseModel):
@@ -115,8 +115,8 @@ class AuthenticatedUser(BaseModel):
     id: str
     email: str
     created_at: Optional[str] = None
-    app_metadata: dict = {}
-    user_metadata: dict = {}
+    app_metadata: dict = Field(default_factory=dict)
+    user_metadata: dict = Field(default_factory=dict)
     token: str
 
     @property
@@ -219,12 +219,15 @@ async def get_current_user(
             )
 
         user = user_response.user
+        app_meta = user.app_metadata if isinstance(user.app_metadata, dict) else {}
+        user_meta = user.user_metadata if isinstance(user.user_metadata, dict) else {}
+
         return AuthenticatedUser(
             id=str(user.id),
             email=user.email or "",
             created_at=str(user.created_at) if user.created_at else None,
-            app_metadata=user.app_metadata or {},
-            user_metadata=user.user_metadata or {},
+            app_metadata=app_meta,
+            user_metadata=user_meta,
             token=token,
         )
     except HTTPException:
@@ -285,14 +288,17 @@ async def signup(credentials: AuthRequest):
                 detail={"error": "Unable to create account with provided details"},
             )
 
+        app_meta = response.user.app_metadata if isinstance(response.user.app_metadata, dict) else {}
+        user_meta = response.user.user_metadata if isinstance(response.user.user_metadata, dict) else {}
+
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
             content={
                 "id": str(response.user.id),
                 "email": response.user.email,
                 "created_at": str(response.user.created_at) if response.user.created_at else None,
-                "app_metadata": response.user.app_metadata or {},
-                "user_metadata": response.user.user_metadata or {},
+                "app_metadata": app_meta,
+                "user_metadata": user_meta,
             },
         )
     except HTTPException:

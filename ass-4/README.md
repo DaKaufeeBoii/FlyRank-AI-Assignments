@@ -305,3 +305,71 @@ test_api.py::test_swagger_openapi_schema_contains_http_bearer PASSED
 
 ======================= 16 passed in 1.36s =======================
 ```
+
+---
+
+## Stage 7: AI vs Me (Bonus Stage)
+
+### 1. The Specification Prompt
+
+Without copying from the assignment guide, the following prompt was formulated from memory to challenge the AI:
+
+```text
+Build a production-style REST API in Python using FastAPI and Supabase Auth as the Identity Provider.
+The service must expose:
+1. POST /auth/signup (returns 201 Created with user object, 400 on missing or invalid inputs)
+2. POST /auth/login (returns 200 OK with access_token and refresh_token, 400 on empty fields, 401 on bad credentials)
+3. POST /auth/logout (protected endpoint, ends session, returns 204 No Content)
+4. GET /public/info (open endpoint, returns 200 OK with public greeting)
+5. GET /protected/profile (protected endpoint, verifies JWT via Supabase, returns 200 with user id and email)
+
+Protected endpoints must use a reusable FastAPI dependency to extract and verify the Bearer token from the Authorization header.
+Configure Swagger UI bearer authentication so the Authorize padlock works at /docs.
+All errors must return JSON in the format {"error": "..."}.
+```
+
+The AI-generated code was saved in quarantine inside [`ass-4/ai-version/`](file:///d:/Kaufee/padhai/Internships/FlyRank.ai/ass-4/ai-version/main.py).
+
+### 2. Code Comparison & Review (`git diff --no-index`)
+
+Running `git diff --no-index main.py ai-version/main.py` highlighted three critical differences answering the core review questions:
+
+#### Question A: How did it handle token extraction?
+- **AI Implementation:**
+  ```python
+  auth_header = request.headers.get("Authorization", "")
+  token = auth_header.split(" ")[1]
+  ```
+  The AI naively performed string splitting without validating header structure. If an incoming request sent `Authorization: secret_token_xyz` without the `Bearer` prefix, or sent empty whitespace, this line crashed with an unhandled `IndexError` (triggering an HTTP 500 Internal Server Error) instead of returning HTTP 401.
+- **Our Implementation:**
+  ```python
+  parts = auth_header.strip().split()
+  if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+      raise HTTPException(
+          status_code=status.HTTP_401_UNAUTHORIZED,
+          detail={"error": "Access token required"},
+      )
+  ```
+  Strictly validates that exactly two tokens exist, case-insensitively checks the `Bearer` keyword, rejects empty tokens, and guarantees a standard `401 Unauthorized` with `{"error": "Access token required"}`.
+
+#### Question B: What security flaws did it introduce?
+- **Sensitive Token Logging**: The AI included:
+  ```python
+  print(f"Auth failed for token {token}: {e}")
+  ```
+  Dumping raw bearer tokens into standard output and application logs creates a serious security risk (tokens could be intercepted by observability pipelines, log sinks, or unauthorized staff).
+- **Default 403 vs 401 Conflict**: The AI used `security = HTTPBearer()` without `auto_error=False`. When an Authorization header was missing, FastAPI intercepted the request and automatically returned `403 Forbidden` (`{"detail": "Not authenticated"}`) instead of the assignment-mandated `401 Unauthorized` (`{"error": "Access token required"}`).
+- **Input Validation Mismatch (422 vs 400)**: The AI relied on raw Pydantic models without a custom `RequestValidationError` handler, causing missing fields to return HTTP `422 Unprocessable Entity` instead of HTTP `400 Bad Request`.
+
+#### Question C: What did the prompt forget to specify, and what did the AI silently decide?
+- **Omitted**: The prompt didn't specify whether to use `auto_error=False` on `HTTPBearer`, leading the AI to pick the default which hijacks 401 handling into 403.
+- **Omitted**: The prompt omitted how session sign-out should behave; the AI blindly called `supabase.auth.sign_out()` globally without handling exceptions or tying to the active user context.
+- **Silent Decision**: The AI silently chose the deprecated `@app.on_event("startup")` syntax instead of the modern `@asynccontextmanager` lifespan standard recommended in modern FastAPI.
+
+### 3. The Rematch: Improved Prompt & Outcome
+
+**Improved Prompt:**
+> "Build a FastAPI REST API using Supabase Auth as the IdP. Use the modern @asynccontextmanager lifespan. Configure HTTPBearer(auto_error=False) so missing headers do not trigger default 403s. Implement custom exception handlers mapping validation errors to HTTP 400 with a JSON {'error': '...'} schema. Safely parse the 'Authorization: Bearer <token>' header ensuring length and case checks without crashing or logging tokens. Implement endpoints: POST /auth/signup (201), POST /auth/login (200), POST /auth/logout (204), GET /public/info (200), and GET /protected/profile (200)."
+
+**Rematch Result:**
+By explicitly constraining the lifespan pattern, `auto_error=False`, and token parsing safety in the improved prompt, the regenerated code eliminated the `IndexError` crash and properly adhered to all HTTP 400/401 contract requirements on the first run.
