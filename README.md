@@ -21,6 +21,16 @@ Repository containing the weekly assignments and projects for the FlyRank Backen
 - **Focus:** Containerizing the stack, multi-container orchestration with `compose.yaml`, `.env` secret management, PostgreSQL volume persistence, parameterized queries, health checks, database indexing, and AI code review rematch.
 - [View Assignment 3 Details & Documentation](./ass-3/README.md)
 
+### [Week 5 (Assignment 4): Auth · Login & Protect](./ass-4/)
+- **Tech Stack:** Python 3.10+, FastAPI, Supabase Auth, Pydantic, HTTPBearer JWT
+- **Focus:** Complete authentication lifecycle, user signup, login, session termination (logout), protected routes with dependency injection, token verification, role-based access control (403), token refresh, and rate-limiting.
+- [View Assignment 4 Details & Documentation](./ass-4/README.md)
+
+### [Week 6 (Assignment 5): The Polite Scraper](./ass-5/)
+- **Tech Stack:** Python 3.10+, Requests, BeautifulSoup4, Pydantic v2, Pytest
+- **Focus:** Deterministic scraping pipeline for Books to Scrape, target classification, polite fetching (User-Agent, 500ms delay, 10s timeout), local disk caching, 8-field raw extraction with provenance, Pydantic schema validation (`price_gbp` numeric), idempotency, surviving broken pages (HTTP 404/5xx handling), run audit reporting, CSV export, change detection, and AI rematch.
+- [View Assignment 5 Details & Documentation](./ass-5/README.md)
+
 ---
 
 ## Quick Start (Assignment 3)
@@ -63,3 +73,24 @@ pytest -v test_api.py
 
 - Interactive Swagger Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health Check: [http://localhost:8000/health](http://localhost:8000/health)
+
+---
+
+## Quick Start (Assignment 5)
+
+```bash
+# Navigate to Assignment 5
+cd ass-5
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the complete polite scraper pipeline
+python main.py
+
+# Run test suite
+python -m pytest -v tests/test_scraper.py
+```
+
+- Output Directory: `ass-5/output/` (`books.json`, `books.csv`, `run-report.json`, `dashboard.html`)
+- Standalone HTML Dashboard: [View Dashboard](file:///d:/Kaufee/padhai/Internships/FlyRank.ai/ass-5/output/dashboard.html)
