@@ -159,3 +159,70 @@ The database storage is backed by a named Docker volume `taskdata` (`ass-3_taskd
 3. Run `docker compose up -d` — containers are recreated and remount the existing volume.
 4. Query `GET /tasks/4` -> `200 OK` with all task data intact.
 5. The `init_db()` seed function checks `SELECT COUNT(*) FROM tasks;` and executes the seed query **only if the table is empty (count == 0)**, ensuring idempotent startup with no duplicated rows.
+
+---
+
+## Extras & Architectural Deep Dives
+
+### 1. The Database Mortality Experiment (Why Volumes Exist)
+When a container runs without a mounted volume, all changes to `/var/lib/postgresql/data` are stored in the container's ephemeral copy-on-write filesystem layer (OverlayFS). The moment the container is removed (`docker rm`), its writable layer is permanently discarded by Docker, causing all database rows to vanish. Named volumes decouple storage from the container lifecycle by mapping disk space on the host, ensuring data persists across restarts, upgrades, and rebuilds.
+
+### 2. Production Health Check with Database Gate
+The `GET /health` endpoint does not merely return a static string; it executes an active `SELECT 1;` query against the PostgreSQL database. If the database is unreachable or recovering, the endpoint raises HTTP `503 Service Unavailable`:
+
+```bash
+$ curl -i http://localhost:3000/health
+HTTP/1.1 200 OK
+{"status":"ok","db":"ok"}
+```
+
+**Why this matters in production:** Reverse proxies and cloud load balancers (such as AWS ALB, GCP Load Balancer, or Nginx) use health checks to gate deployments and traffic. If a container cannot communicate with its database, the load balancer automatically stops directing user traffic to that container until it recovers.
+
+### 3. PostgreSQL Performance Indexing & EXPLAIN ANALYZE
+Indexes were created on `title` and `done` columns:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_tasks_done ON tasks(done);
+CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(title);
+```
+
+#### Query Execution Plan (`EXPLAIN ANALYZE`):
+
+```sql
+tasks=# EXPLAIN ANALYZE SELECT * FROM tasks WHERE title = 'Read the assignment';
+
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on tasks  (cost=4.19..12.66 rows=5 width=53) (actual time=0.035..0.036 rows=1 loops=1)
+   Recheck Cond: (title = 'Read the assignment'::text)
+   Heap Blocks: exact=1
+   ->  Bitmap Index Scan on idx_tasks_title  (cost=0.00..4.19 rows=5 width=0) (actual time=0.025..0.025 rows=1 loops=1)
+         Index Cond: (title = 'Read the assignment'::text)
+ Planning Time: 0.401 ms
+ Execution Time: 0.068 ms
+(7 rows)
+```
+
+The database query planner utilizes a `Bitmap Index Scan on idx_tasks_title` via B-Tree index traversal rather than a sequential scan, ensuring sub-millisecond execution time even as the table grows to millions of rows.
+
+### 4. Automated Pytest Test Suite
+A complete automated test suite in `test_api.py` validates all endpoints, status codes, validations, and aggregation queries:
+
+```bash
+python -m pytest -v ass-3/test_api.py
+```
+```
+ass-3/test_api.py::test_health_check PASSED                              [  8%]
+ass-3/test_api.py::test_read_root PASSED                                 [ 16%]
+ass-3/test_api.py::test_list_tasks_seeded PASSED                         [ 25%]
+ass-3/test_api.py::test_get_single_task_success PASSED                   [ 33%]
+ass-3/test_api.py::test_get_single_task_not_found PASSED                 [ 41%]
+ass-3/test_api.py::test_create_task_success PASSED                       [ 50%]
+ass-3/test_api.py::test_create_task_empty_title_validation PASSED        [ 58%]
+ass-3/test_api.py::test_update_task_success PASSED                       [ 66%]
+ass-3/test_api.py::test_update_task_not_found PASSED                     [ 75%]
+ass-3/test_api.py::test_delete_task_success PASSED                       [ 83%]
+ass-3/test_api.py::test_delete_task_not_found PASSED                     [ 91%]
+ass-3/test_api.py::test_stats_endpoint PASSED                            [100%]
+======================= 12 passed in 1.81s ========================
+```
