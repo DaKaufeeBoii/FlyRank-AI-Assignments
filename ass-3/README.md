@@ -226,3 +226,50 @@ ass-3/test_api.py::test_delete_task_not_found PASSED                     [ 91%]
 ass-3/test_api.py::test_stats_endpoint PASSED                            [100%]
 ======================= 12 passed in 1.81s ========================
 ```
+
+---
+
+## Stage 6: Bonus Stage — The AI Rematch
+
+The AI implementation was generated in isolation and quarantined inside [`ass-3/ai-version/`](./ai-version/).
+
+### The Prompt Used
+```text
+Create a complete containerized FastAPI Task CRUD API backed by PostgreSQL.
+Requirements:
+1. Python with FastAPI and raw psycopg driver.
+2. Store tasks in PostgreSQL with id (serial primary key), title (text), done (boolean).
+3. Connect using DATABASE_URL from .env file (never hardcode passwords).
+4. On startup, initialize tables and seed 3 initial tasks ('Read the assignment', 'Build the task API', 'Try the Swagger docs') only if the table is empty.
+5. Provide five REST endpoints: GET /tasks, GET /tasks/{id}, POST /tasks, PUT /tasks/{id}, DELETE /tasks/{id} with identical input/output shapes and parameterized queries.
+6. Return proper status codes: 201 on POST, 204 on DELETE, 400 on empty title, 404 on unknown ID.
+7. Include Dockerfile and compose file with named volume for data persistence across restarts so one command 'docker compose up' boots the entire stack.
+```
+
+### Detailed Code Review & Comparison (`AI vs Me`)
+
+| Criterion | My Implementation (`ass-3/`) | AI-Generated (`ass-3/ai-version/`) | Verdict |
+| :--- | :--- | :--- | :--- |
+| **Startup Resiliency** | Implements connection retry with exponential backoff in `database.init_db()` to wait for Postgres cluster boot. | Tries connecting once inside deprecated `@app.on_event("startup")`. Can crash container during initial database boot. | **Me** (Production Resilient) |
+| **DELETE Unknown ID** | Checks `cur.rowcount > 0`, raising `404 Not Found` if the ID does not exist. | Omitted `rowcount` check entirely; returns `204 No Content` for non-existent IDs. | **Me** (Specification Compliant) |
+| **Base Docker Image** | Uses `python:3.11-slim` with `PYTHONDONTWRITEBYTECODE=1` (~180MB image size). | Uses full `python:3.11` image (>1GB image size) without layer optimization. | **Me** (Lean & Optimized) |
+| **Database Architecture** | Modular repository pattern in `database.py` with B-Tree indexes on `title` and `done`. | Inlines SQL queries directly into FastAPI route functions without indexing. | **Me** (Clean Architecture) |
+| **Live Database Health Probe** | `/health` endpoint executes active `SELECT 1;` query against PostgreSQL. | No `/health` endpoint provided. | **Me** (Deploy-Gated) |
+| **Compose Modern Standards** | Modern `compose.yaml` without obsolete top-level `version` tag. | Specifies legacy `version: '3.8'` attribute. | **Me** (Modern Spec) |
+
+### 3 Concrete Differences Found
+
+1. **What did it get wrong or ignore?**
+   - **Silent 204 on DELETE:** The AI executed `DELETE FROM tasks WHERE id = %s;` but neglected to inspect `cur.rowcount`. Deleting `/tasks/99999` returns `204 No Content` instead of the required `404 Not Found`.
+   - **Database Startup Race Condition:** Because `depends_on: [db]` only waits for the database container to start (not for the PostgreSQL engine inside to finish initializing), the AI's unretried connection throws an immediate `psycopg.OperationalError` on first run.
+
+2. **What did it do better?**
+   - The AI's Pydantic model naming (`TaskSchema`, `TaskUpdateSchema`) was concise, and it mapped dictionary rows directly with minimal boilerplate.
+
+3. **What did my prompt forget to specify?**
+   - The prompt forgot to explicitly mandate **connection retry/backoff on startup**, **a dedicated `/health` check with database ping**, and **a slim Docker base image (`python:3.11-slim`)**.
+
+### Rematch: Improved Prompt & Outcome
+> **Improved Prompt:** *"Containerize FastAPI + PostgreSQL using psycopg 3. Use python:3.11-slim with non-root user, compose.yaml (no top-level version key), healthcheck on both containers, connection retry loop with backoff in lifespan context manager, and ensure DELETE checks cursor rowcount to return 404 on missing records."*
+>
+> **What Changed:** The regenerated AI version added a retry loop inside lifespan, switched to `python:3.11-slim`, verified `cur.rowcount > 0` before returning 204, and included healthchecks in `compose.yaml`. **Key Lesson:** An AI's output is exactly as good as the precision of your engineering specification.
