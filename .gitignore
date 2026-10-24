@@ -24,3 +24,7 @@ node_modules/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Wheels / local package caches
+wheels/
+*.whl

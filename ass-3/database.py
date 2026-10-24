@@ -1,6 +1,7 @@
 """Database repository module for PostgreSQL with parameterized queries, schema init, and seeding."""
 
 import os
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 import psycopg
@@ -18,15 +19,22 @@ def get_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
-def init_db() -> None:
+def init_db(max_retries: int = 10, retry_delay: float = 1.5) -> None:
     """Initialize PostgreSQL database schema and seed initial tasks if table is empty.
     
-    Creates:
-      - tasks table: id SERIAL PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT FALSE
-      - indexes on done and title for query performance
-      - initial tasks only on first run (seed-once rule)
+    Includes connection retry logic to gracefully handle database startup delay in Docker Compose.
     """
-    with get_connection() as conn:
+    conn = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            conn = get_connection()
+            break
+        except Exception as exc:
+            if attempt == max_retries:
+                raise RuntimeError(f"Could not connect to PostgreSQL after {max_retries} attempts: {exc}")
+            time.sleep(retry_delay)
+
+    with conn:
         with conn.cursor() as cur:
             # 1. Create tasks table if it does not exist
             cur.execute(

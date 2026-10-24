@@ -12,3 +12,7 @@ venv/
 
 # Node
 node_modules/
+
+# Local wheel cache
+wheels/
+*.whl
