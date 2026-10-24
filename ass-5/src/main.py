@@ -1,32 +1,30 @@
 """
 Books to Scrape - Polite Scraping Pipeline
-Stage 1 Entry point: Fetch once, cache once.
+Stage 2 Entry point: Discover three catalogue pages.
 """
 import sys
 import os
 
-# Add parent directory to path to allow running as `python src/main.py` or `python main.py`
+# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.fetcher import PoliteFetcher
+from src.crawler import CatalogueCrawler
 
-CATALOGUE_PAGE_1_URL = "https://books.toscrape.com/catalogue/page-1.html"
 
-
-def stage_1_fetch_demo():
+def stage_2_discovery():
+    print("=== Stage 2: Discover Three Catalogue Pages ===")
     fetcher = PoliteFetcher(cache_dir="cache")
-    print("=== Stage 1: Fetch Once, Cache Once ===")
-    content, is_cache, status, size = fetcher.fetch(
-        CATALOGUE_PAGE_1_URL, 
-        cache_key="catalogue-page-1"
-    )
-    mode = "CACHE HIT" if is_cache else "FETCH"
-    print(f"Result: {mode} | Status: {status} | Size: {size:,} bytes")
-    print("Successfully verified: HTML not dumped to terminal, polite headers sent.")
+    crawler = CatalogueCrawler(fetcher, max_pages=3)
+    
+    discovered, catalogue_pages, total_discovered, unique_urls = crawler.discover_books()
+    print(f"catalogue_pages={catalogue_pages}, discovered={total_discovered}, unique_urls={unique_urls}")
+    return discovered
 
 
 def main():
-    stage_1_fetch_demo()
+    stage_2_discovery()
+
 
 if __name__ == "__main__":
     main()
