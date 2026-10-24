@@ -1,6 +1,13 @@
 """
 Books to Scrape - Polite Scraping Pipeline
-Stage 5 Entry point: Survive failures, isolate errors, and generate run report.
+Main Execution Entry Point.
+Coordinates:
+- Polite crawling and fetching (user-agent, delay, timeout, caching)
+- Raw HTML extraction (targeted selectors, provenance tracking)
+- Schema normalization and validation (Pydantic, price_gbp numeric, canonical URL)
+- Failure survival and error isolation
+- Run reporting (output/run-report.json)
+- Optional Extras: CSV export, change detection, dashboard generation, structured logging
 """
 import sys
 import os
@@ -9,26 +16,34 @@ import argparse
 from datetime import datetime, timezone
 
 # Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 from src.fetcher import PoliteFetcher
 from src.crawler import CatalogueCrawler
 from src.extractor import extract_raw_book_record, get_book_cache_key
 from src.storage import BookStorage
 from src.reporter import RunReporter
+from src.extras import export_to_csv, detect_changes, generate_dashboard, StructuredLogger
 
 
-def run_pipeline(inject_fake_url: bool = False):
+def run_pipeline(inject_fake_url: bool = False, max_pages: int = 3):
     start_dt = datetime.now(timezone.utc)
     start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     start_ts = time.time()
 
-    print("=== Books to Scrape - Polite Pipeline ===")
+    logger = StructuredLogger(log_path="output/scraper.log")
+    logger.log("INFO", "pipeline_started", start_time=start_time_iso, max_pages=max_pages, inject_fake_url=inject_fake_url)
+
+    print("==================================================")
+    print("      BOOKS TO SCRAPE · POLITE PIPELINE          ")
+    print("==================================================")
     if inject_fake_url:
         print("[TEST MODE] Injecting 1 deliberately fake URL to prove failure tolerance...")
 
     fetcher = PoliteFetcher(cache_dir="cache")
-    crawler = CatalogueCrawler(fetcher, max_pages=3)
+    crawler = CatalogueCrawler(fetcher, max_pages=max_pages)
     storage = BookStorage(output_dir="output")
     reporter = RunReporter(output_dir="output")
 
@@ -36,7 +51,6 @@ def run_pipeline(inject_fake_url: bool = False):
     discovered, catalogue_pages, total_discovered, unique_urls = crawler.discover_books()
     print(f"Discovered {unique_urls} books across {catalogue_pages} catalogue pages.")
 
-    # Inject fake URL if testing failure
     if inject_fake_url:
         fake_book = {
             "product_url": "https://books.toscrape.com/catalogue/made-up-broken-book_9999/index.html",
@@ -58,11 +72,13 @@ def run_pipeline(inject_fake_url: bool = False):
             html, is_cache, status, size = fetcher.fetch(url, cache_key=cache_key)
             record = extract_raw_book_record(html, product_url=url, source_page=source)
             raw_records.append(record)
+            logger.log("DEBUG", "page_extracted", url=url, is_cache=is_cache, status=status)
         except Exception as err:
             failed_pages += 1
             err_msg = str(err)
             print(f"SKIPPED    Failed page: {url} -> {err_msg}")
             failed_urls.append({"url": url, "error": err_msg})
+            logger.log("ERROR", "page_failed", url=url, error=err_msg)
 
     # Step 3: Validate and store
     valid_records, invalid_records = storage.validate_and_store(raw_records)
@@ -84,14 +100,28 @@ def run_pipeline(inject_fake_url: bool = False):
         failed_urls=failed_urls
     )
 
-    print("\n--- Checkpoint Stage 5 Run Report Summary ---")
+    # Step 5: Optional Extras execution
+    csv_path = export_to_csv(valid_records, output_path="output/books.csv")
+    diff_report = detect_changes(valid_records, state_file="output/.last_run_hashes.json")
+    dashboard_path = generate_dashboard(valid_records, report, output_path="output/dashboard.html")
+
+    logger.log("INFO", "pipeline_completed", 
+               duration_s=report["duration_seconds"],
+               valid_records=report["valid_records"],
+               failed_pages=report["failed_pages"],
+               changes=diff_report)
+
+    print("\n---------------- Run Summary ---------------------")
     print(f"Duration:         {report['duration_seconds']}s")
     print(f"Pages Fetched:    {report['pages_fetched']}")
     print(f"Cache Hits:       {report['cache_hits']}")
     print(f"Valid Records:    {report['valid_records']}")
     print(f"Invalid Records:  {report['invalid_records']}")
     print(f"Failed Pages:     {report['failed_pages']}")
-    print(f"Report written to: output/run-report.json")
+    print(f"CSV Export:       {csv_path}")
+    print(f"HTML Dashboard:   {dashboard_path}")
+    print(f"Changes Detected: {diff_report}")
+    print("--------------------------------------------------\n")
 
     return report
 
