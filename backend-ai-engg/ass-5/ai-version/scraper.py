@@ -8,7 +8,7 @@ import time
 import json
 from datetime import datetime, timezone
 from urllib.parse import urljoin
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import requests
 from bs4 import BeautifulSoup
