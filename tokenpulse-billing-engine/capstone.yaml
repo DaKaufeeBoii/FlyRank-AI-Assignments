@@ -1,0 +1,32 @@
+name: tokenpulse-billing-engine
+track: backend-ai-engineering
+version: 1.0.0
+author: Sai Tarun Reddy (saitarunrdy@gmail.com)
+
+run: uvicorn app.main:app --port 8000
+seed: python seed.py
+test: python -m pytest tests/test_probes.py -v
+base_url: http://localhost:8000
+
+endpoints:
+  - path: /health
+    method: GET
+    description: Health check and database connectivity verification
+  - path: /plans
+    method: GET
+    description: Returns available subscription tiers, monthly quotas, and costs
+  - path: /generate
+    method: POST
+    description: Billable generation endpoint with Idempotency-Key header and quota enforcement
+  - path: /usage
+    method: GET
+    description: Monthly usage rollup for a tenant (calls, tokens, integer-calculated cost)
+  - path: /checkout
+    method: POST
+    description: Initiates Stripe test-mode checkout session for Pro upgrade
+  - path: /webhooks/stripe
+    method: POST
+    description: Cryptographically verified and deduplicated Stripe webhook receiver
+  - path: /seed
+    method: POST
+    description: Re-initializes and seeds clean test tenants and plans

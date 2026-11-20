@@ -1,15 +1,31 @@
-# FlyRank AI Internship — Track Deliverables & Portfolios
+# FlyRank AI Internship — Track Deliverables & Capstones
 
 **Author:** Sai Tarun Reddy (`saitarunrdy@gmail.com`)  
 **Repository:** [FlyRank-AI-Assignments](https://github.com/DaKaufeeBoii/FlyRank-AI-Assignments)
 
-This repository contains the weekly assignments, systems, and artifacts for the FlyRank Internship across two tracks:
-1. **[Backend AI Engineering Track](./backend-ai-engg/)** (5/5 assignments complete)
-2. **[General AI Fluency Track](./general-ai-fluency/)** (5/5 assignments complete)
+This repository contains the complete portfolio of weekly assignments and production capstones for the FlyRank Internship across two tracks:
+1. **Backend AI Engineering Track** (5/5 assignments + Accepted Capstone)
+2. **General AI Fluency Track** (5/5 assignments + Accepted Capstone)
 
 ---
 
-## 1. General AI Fluency Track (`general-ai-fluency/`)
+## 🌟 Featured Track Capstones
+
+### 1. Backend AI Engineering Capstone: [TokenPulse — Usage Metering & Billing Engine](./tokenpulse-billing-engine/)
+* **Stack:** Python 3.10+, FastAPI, SQLite3 (WAL mode), Pydantic v2, Pytest, Stripe Test Mode
+* **Focus:** Guaranteed exactly-once metering under retries, zero double charges via idempotency keys, boundary-honest quota enforcement (429 vs 402), integer-based token pricing math (cached input discounts, reasoning token output classification), and cryptographically verified Stripe webhooks.
+* **Probes Verified:** 5/5 Acceptance Probes passed.
+* **Explore:** [tokenpulse-billing-engine/](./tokenpulse-billing-engine/) | [EVIDENCE.md](./tokenpulse-billing-engine/EVIDENCE.md) | [BUILDLOG.md](./tokenpulse-billing-engine/BUILDLOG.md)
+
+### 2. General AI Fluency Capstone: [CogniFlow — Intelligent Incident Triage & ROI Engine](./cogniflow-ai-impact-project/)
+* **Stack:** Python 3.10+, Pydantic v2, Pytest, Standalone HTML Observability Dashboard
+* **Focus:** End-to-end operational AI pipeline transforming chaotic production error logs into structured root-cause analysis, severity classifications (SEV-1 to SEV-3), and dual-audience communications (internal briefs vs plain-English external customer updates with zero buzzwords).
+* **ROI Achieved:** 93.3% reduction in triage toil; 560 engineering hours reclaimed; $44,800 net annual business ROI.
+* **Explore:** [cogniflow-ai-impact-project/](./cogniflow-ai-impact-project/) | [EVIDENCE.md](./cogniflow-ai-impact-project/EVIDENCE.md) | [BUILDLOG.md](./cogniflow-ai-impact-project/BUILDLOG.md)
+
+---
+
+## 📚 General AI Fluency Track (`general-ai-fluency/`)
 *Meets the 5-assignment threshold required for the General AI Fluency completion certificate.*
 
 | Code / Assignment | Week | Description | Link |
@@ -22,7 +38,7 @@ This repository contains the weekly assignments, systems, and artifacts for the 
 
 ---
 
-## 2. Backend AI Engineering Track (`backend-ai-engg/`)
+## 🛠️ Backend AI Engineering Track (`backend-ai-engg/`)
 *Meets the 5-assignment threshold required for the Backend AI Engineering completion certificate.*
 
 | Assignment | Tech Stack | Core Highlights | Link |
@@ -32,22 +48,3 @@ This repository contains the weekly assignments, systems, and artifacts for the 
 | **Assignment 3: Containerize Your Stack** | Docker, Docker Compose, PostgreSQL 17 | Multi-container orchestration, volume persistence, `pg_isready` health checks, `.env` management. | [Details](./backend-ai-engg/ass-3/) |
 | **Assignment 4: Auth · Login & Protect** | Supabase Auth, JWT, FastAPI | Signup, login, logout, protected routes, HTTPBearer verification, role-based access control (RBAC). | [Details](./backend-ai-engg/ass-4/) |
 | **Assignment 5: The Polite Scraper** | Requests, BeautifulSoup4, Pydantic v2 | 500ms rate limiting, local disk cache, failure tolerance (404/5xx survival), JSON/CSV exports, dashboard. | [Details](./backend-ai-engg/ass-5/) |
-
----
-
-## Running Backend Projects Locally
-
-### Run Assignment 3 (Docker Compose)
-```bash
-cd backend-ai-engg/ass-3
-docker compose up -d
-curl http://localhost:3000/health
-```
-
-### Run Assignment 5 (The Polite Scraper)
-```bash
-cd backend-ai-engg/ass-5
-pip install -r requirements.txt
-python main.py
-python -m pytest -v tests/test_scraper.py
-```

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "INC-8101",
+    "timestamp": "2026-11-18T14:22:10Z",
+    "service": "billing-gateway",
+    "raw_logs": "ERROR: upstream Stripe webhook timeout after 10000ms. Tenant cus_88921 experiencing checkout failures. 42 concurrent requests hanging in connection pool. Memory usage spiked to 92%.",
+    "customer_tier": "enterprise",
+    "affected_users": 1420
+  },
+  {
+    "id": "INC-8102",
+    "timestamp": "2026-11-18T15:05:40Z",
+    "service": "database-cluster",
+    "raw_logs": "FATAL: PostgreSQL connection limit exceeded (max_connections=500 reached). Transaction rollback rate spiked to 38%. Deadlock detected between worker-3 and worker-7 on table orders.",
+    "customer_tier": "enterprise",
+    "affected_users": 4800
+  },
+  {
+    "id": "INC-8103",
+    "timestamp": "2026-11-18T16:12:00Z",
+    "service": "auth-service",
+    "raw_logs": "WARN: Supabase JWT validation token expired. User received HTTP 401 on /profile. Single user reported via web console. Token refreshed cleanly on retry.",
+    "customer_tier": "free",
+    "affected_users": 1
+  },
+  {
+    "id": "INC-8104",
+    "timestamp": "2026-11-18T17:30:15Z",
+    "service": "scraper-worker",
+    "raw_logs": "CRITICAL: Books to Scrape worker received HTTP 429 Too Many Requests. IP address throttled. Proxy pool rotation initiated. 12 background jobs paused with status pending_retry.",
+    "customer_tier": "pro",
+    "affected_users": 35
+  },
+  {
+    "id": "INC-8105",
+    "timestamp": "2026-11-18T18:45:00Z",
+    "service": "api-gateway",
+    "raw_logs": "INFO: Routine SSL certificate auto-renewal successful. Let's Encrypt cert validated for *.api.flyrank.ai. Zero dropped connections during renewal.",
+    "customer_tier": "system",
+    "affected_users": 0
+  }
+]

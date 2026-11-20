@@ -1,0 +1,17 @@
+name: cogniflow-ai-impact-project
+track: general-ai-fluency
+version: 1.0.0
+author: Sai Tarun Reddy (saitarunrdy@gmail.com)
+
+run: python -m pipeline.runner
+test: python -m pytest tests/test_impact.py -v
+benchmark: python -m pipeline.runner
+data_path: data/sample_incidents.json
+output_dashboard: output/dashboard.html
+
+core_metrics:
+  - baseline_triage_time_per_incident: 45 min
+  - cogniflow_triage_time_per_incident: 1.2 min
+  - time_reduction_percentage: 93.3%
+  - annual_projected_roi: $44,800 USD
+  - dataset_size: 5 enterprise scenarios
